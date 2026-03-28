@@ -1,0 +1,21 @@
+winlogbeat.event_logs:
+  - name: Security
+    event_id: 4624, 4625, 4688
+    tags: ["windows", "security", "iam"]
+    fields:
+      source: winlogbeat
+      data_source: windows_iam
+    fields_under_root: true
+
+  - name: System
+    tags: ["windows", "system"]
+    fields:
+      source: winlogbeat
+      data_source: windows_system
+    fields_under_root: true
+
+output.kafka:
+  hosts: ["localhost:9092"]
+  topic: "soc-logs"  # ✅ CHANGED from winlogbeat-raw
+
+logging.level: info
