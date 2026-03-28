@@ -1,0 +1,67 @@
+{
+  "settings": {
+    "number_of_shards": 3,
+    "number_of_replicas": 1,
+    "refresh_interval": "5s"
+  },
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+
+      "schema_version": { "type": "keyword" },
+      "pipeline_id":    { "type": "keyword" },
+      "event_id":       { "type": "keyword" },
+
+      "timestamp":   { "type": "date" },
+      "ingested_at": { "type": "date" },
+
+      "event_kind":     { "type": "keyword" },
+      "event_category": { "type": "keyword" },
+      "event_type":     { "type": "keyword" },
+      "action":         { "type": "keyword" },
+      "outcome":        { "type": "keyword" },
+      "severity":       { "type": "keyword" },
+      "error_code":     { "type": "keyword" },
+
+      "source":      { "type": "keyword" },
+      "source_file": { "type": "keyword" },
+
+      "user":                 { "type": "keyword" },
+      "user_domain":          { "type": "keyword" },
+      "user_privilege_level": { "type": "keyword" },
+
+      "host":    { "type": "keyword" },
+      "host_os": { "type": "keyword" },
+
+      "ip":                { "type": "ip" },
+      "source_port":       { "type": "integer" },
+      "destination_ip":    { "type": "ip" },
+      "destination_port":  { "type": "integer" },
+      "network_protocol":  { "type": "keyword" },
+      "network_direction": { "type": "keyword" },
+      "geo_country":       { "type": "keyword" },
+
+      "rule_name": { "type": "keyword" },
+      "rule_id":   { "type": "keyword" },
+
+      "process_name":   { "type": "keyword" },
+      "process_id":     { "type": "integer" },
+      "parent_process": { "type": "keyword" },
+
+      "resource": {
+        "type": "text",
+        "fields": {
+          "keyword": { "type": "keyword", "ignore_above": 512 }
+        }
+      },
+
+      "is_valid":          { "type": "boolean" },
+      "validation_errors": { "type": "keyword" },
+
+      "metadata": {
+        "type": "object",
+        "dynamic": true
+      }
+    }
+  }
+}

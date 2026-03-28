@@ -1,0 +1,46 @@
+filebeat.inputs:
+  - type: filestream
+    enabled: true
+    id: windows-temp-logs
+    paths:
+      - C:\Users\nandn\AppData\Local\Temp\*.log
+    tags: ["windows", "system"]
+    fields:
+      source: filebeat
+      data_source: windows_temp_logs
+      event_type: file
+      severity: low
+      user: nandn
+      host_os: windows
+      outcome: success
+    fields_under_root: true
+
+  - type: filestream
+    enabled: true
+    id: firewall-logs
+    paths:
+      - C:\Windows\System32\LogFiles\Firewall\pfirewall.log
+    tags: ["firewall", "network"]
+    fields:
+      source: filebeat
+      data_source: windows_firewall
+      event_type: network
+      severity: medium
+      host_os: windows
+    fields_under_root: true
+
+output.kafka:
+  hosts: ["localhost:9092"]
+  topic: "soc-logs"  # ✅ CHANGED from filebeat-raw
+  partition.round_robin:
+    reachable_only: false
+  required_acks: 1
+  compression: gzip
+  max_message_bytes: 1000000
+
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: C:\ProgramData\filebeat\logs
+  name: filebeat
+  keepfiles: 7
