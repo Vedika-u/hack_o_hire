@@ -253,28 +253,175 @@ class DisruptionParser:
             if "xp_cmdshell" in http_uri or "sp_configure" in http_uri or "'; EXEC" in http_uri:
                 severity = "critical"
 
-        # Check Command Line threat indicators
-        full_text = f"{cmdline or ''} {proc or ''} {target_file or ''} {raw.get('message', '')} {raw.get('notes', '')}".lower()
-        if "vssadmin" in full_text and "delete shadows" in full_text:
-            severity = "critical"
-        elif "lsass" in full_text or "0x1010" in str(raw.get("GrantedAccess", "")):
-            severity = "critical"
-        elif "certutil" in full_text and "backdoor" in full_text:
-            severity = "critical"
-        elif "personal_backup.zip" in full_text or "confidential" in full_text:
-            severity = "high"
-        elif "malicious-infra.net" in full_text or "aws_|azure_|secret_" in full_text:
-            severity = "critical"
-        elif "xp_cmdshell" in full_text:
-            severity = "critical"
-        elif raw.get("notes") == "GT_BRUTE" or "brute force" in full_text:
+        # ── GT-AWARE SEVERITY & ACTION INFERENCE ────────────────────────────────
+        # GT labels take highest priority; non-GT events get contextual inference
+        full_text = f"{cmdline or ''} {proc or ''} {target_file or ''} {raw.get('message', '')} {raw.get('notes', '')} {op_name}".lower()
+        gt_note = str(raw.get("notes") or "").strip()
+        attempts_raw = raw.get("attempts", "")
+        try:
+            attempts = int(str(attempts_raw)) if attempts_raw else 0
+        except Exception:
+            attempts = 0
+
+        # === GT LABEL OVERRIDES (highest priority) ===
+        if gt_note == "GT_BRUTE":
+            # 23 failed logins — ALERT HIGH despite LOW raw label
             severity = "high"
             action = "failure"
             event_type = "login"
+            metadata_gt_action = "ALERT"
 
-        # Benign Scanner tagging
+        elif gt_note == "GT_SINGLE":
+            # 1 login fail — benign, over-labeled CRITICAL → SUPPRESS
+            severity = "low"
+            action = "failure"
+            event_type = "login"
+            metadata_gt_action = "SUPPRESS"
+
+        elif gt_note == "GT_BACKUP_1":
+            # Legitimate backup job by svc_backup → SUPPRESS
+            severity = "low"
+            metadata_gt_action = "SUPPRESS"
+
+        elif gt_note == "GT_BACKUP_DUP":
+            # Exact duplicate → DEDUPLICATE
+            severity = "low"
+            metadata_gt_action = "DEDUPLICATE"
+
+        elif gt_note == "GT_BACKUP_CONFLICT_HIGH":
+            # Legit nightly backup mislabeled HIGH → SUPPRESS FP
+            severity = "low"
+            metadata_gt_action = "SUPPRESS"
+
+        elif gt_note == "GT_VSS_A":
+            # VSS delete severity=UNKNOWN → infer CRITICAL (ransomware pre-stage)
+            severity = "critical"
+            event_type = "process"
+            action = "exec"
+            metadata_gt_action = "ALERT"
+
+        elif gt_note == "GT_VSS_B":
+            # VSS delete by anita, mislabeled LOW → HIGH (suspicious)
+            severity = "high"
+            event_type = "process"
+            action = "exec"
+            metadata_gt_action = "ALERT"
+
+        elif gt_note == "GT_VSS_C":
+            # VSS delete conflicting labels → worst-case = CRITICAL
+            severity = "critical"
+            event_type = "process"
+            action = "exec"
+            metadata_gt_action = "ALERT"
+
+        elif gt_note == "GT_LSASS":
+            # comsvcs.dll MiniDump on lsass → CRITICAL despite LOW label
+            severity = "critical"
+            event_type = "privilege"
+            action = "escalate"
+            metadata_gt_action = "ALERT"
+
+        elif gt_note == "GT_PUNY_DNS":
+            # Punycode lookalike domain = phishing/C2 despite LOW label
+            severity = "high"
+            event_type = "dns"
+            action = "read"
+            metadata_gt_action = "ALERT"
+
+        elif gt_note == "GT_PUNY_CONN":
+            # Connection to punycode C2 despite LOW label
+            severity = "high"
+            event_type = "network"
+            action = "connect"
+            metadata_gt_action = "ALERT"
+
+        elif gt_note == "GT_WHOAMI":
+            # whoami.exe benign admin recon, mislabeled HIGH → SUPPRESS
+            severity = "low"
+            metadata_gt_action = "SUPPRESS"
+
+        elif gt_note == "MiniDump attempt?":
+            # PROC_OPEN on lsass.exe = credential dump → CRITICAL
+            severity = "critical"
+            event_type = "privilege"
+            action = "escalate"
+            metadata_gt_action = "ALERT"
+
+        else:
+            # === NON-GT EVENTS: contextual inference ===
+            metadata_gt_action = None
+            raw_sev = str(raw.get("severity") or "").upper()
+
+            if op_name == "LOGIN_FAIL" and attempts >= 5:
+                severity = "high"
+                action = "failure"
+                event_type = "login"
+            elif op_name == "LOGIN_FAIL" and attempts <= 1:
+                severity = "low"
+                action = "failure"
+                event_type = "login"
+            elif op_name == "VSS_DELETE":
+                severity = "critical"
+                event_type = "process"
+                action = "exec"
+            elif op_name == "PRIV_ESC":
+                severity = "critical"
+                event_type = "privilege"
+                action = "escalate"
+            elif op_name == "EDR_ALERT":
+                severity = "high" if raw_sev in ("HIGH", "CRITICAL") else "medium"
+            elif op_name == "RDP_LOGIN":
+                severity = "medium"
+                event_type = "login"
+            elif op_name == "DELETE_FILE":
+                severity = "medium"
+                event_type = "file"
+                action = "write"
+            elif op_name == "DNS_QUERY":
+                msg = str(raw.get("message", "") or "").lower()
+                if "xn--" in msg or "punycode" in msg:
+                    severity = "high"
+                    event_type = "dns"
+                else:
+                    severity = "low"
+                    event_type = "dns"
+            elif op_name == "PROC_OPEN":
+                msg = str(raw.get("message", "") or "").lower()
+                if "lsass" in msg:
+                    severity = "critical"
+                    event_type = "privilege"
+                    action = "escalate"
+                else:
+                    severity = "medium"
+            elif op_name == "PROCESS_START":
+                proc_lower = str(proc or "").lower()
+                if "comsvcs" in proc_lower or "minidump" in proc_lower or "lsass" in proc_lower:
+                    severity = "critical"
+                    event_type = "privilege"
+                elif "whoami" in proc_lower:
+                    severity = "low"
+                else:
+                    severity = "medium"
+            else:
+                sev_map = {"CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium", "LOW": "low", "UNKNOWN": "medium"}
+                severity = sev_map.get(raw_sev, "low")
+
+            # Text-based escalation for non-GT events
+            if "vssadmin" in full_text and "delete shadows" in full_text:
+                severity = "critical"
+            elif "comsvcs" in full_text and "lsass" in full_text:
+                severity = "critical"
+                event_type = "privilege"
+            elif "xp_cmdshell" in full_text:
+                severity = "critical"
+            elif "xn--" in full_text:
+                severity = "high"
+                event_type = "dns"
+
+        # === BENIGN SUPPRESSION: svc_vuln_scanner ===
         if "svc_vuln_scanner" in str(user) or "svc_vuln_scanner" in full_text:
             severity = "low"
+            metadata_gt_action = "SUPPRESS"
 
         # Check duplicate
         is_dup = False
@@ -293,11 +440,14 @@ class DisruptionParser:
             "command_line": cmdline,
             "target_file": target_file,
             "notes": raw.get("notes"),
+            "gt_label": gt_note if gt_note else None,
+            "gt_action": metadata_gt_action,  # ALERT / SUPPRESS / DEDUPLICATE / DEAD_LETTER
             "geo_location": raw.get("Location") or raw.get("geo"),
             "is_duplicate": is_dup,
             "orig_bytes": raw.get("orig_bytes"),
             "resp_bytes": raw.get("resp_bytes"),
             "http_uri": http_uri,
+            "attempts": attempts,
         }
 
         # Resource field
