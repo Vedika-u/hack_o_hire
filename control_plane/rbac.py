@@ -138,4 +138,10 @@ USERS_DB = {
         "role": Role.ADMIN,
         "is_active": True,
     },
+    "vedika": {
+        "username": "vedika",
+        "password_hash": PASSWORD_HASH,
+        "role": Role.SOC_MANAGER,
+        "is_active": True,
+    },
 }

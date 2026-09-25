@@ -1,4 +1,4 @@
-﻿from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Literal, List, Dict, Any
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -309,15 +309,20 @@ class UniversalEvent(BaseModel):
     severity: SeverityLevel = "low"
     user: Optional[str] = None
     user_domain: Optional[str] = None
+    user_privilege_level: Optional[Literal["standard", "admin", "service", "system"]] = None
     host: Optional[str] = None
+    host_os: Optional[Literal["windows", "linux", "macos", "unknown"]] = None
     ip: Optional[str] = None
     destination_ip: Optional[str] = None
     destination_port: Optional[int] = None
+    geo_country: Optional[str] = None
     action: ActionType
     resource: Optional[str] = None
     process_name: Optional[str] = None
     process_id: Optional[int] = None
+    parent_process: Optional[str] = None
     outcome: Optional[Literal["success", "failure", "unknown"]] = None
+    error_code: Optional[str] = None
     is_valid: bool = True
     validation_errors: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -327,6 +332,13 @@ class UniversalEvent(BaseModel):
     def timestamp_must_be_timezone_aware(cls, v):
         if v.tzinfo is None:
             raise ValueError("timestamp must be timezone-aware.")
+        return v
+
+    @field_validator("destination_port")
+    @classmethod
+    def port_must_be_valid(cls, v):
+        if v is not None and not (0 <= v <= 65535):
+            raise ValueError(f"destination_port {v} is out of valid range 0-65535.")
         return v
 
 

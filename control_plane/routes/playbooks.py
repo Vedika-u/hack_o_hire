@@ -296,3 +296,103 @@ async def execute_approved_step(
         }
     else:
         raise HTTPException(status_code=400, detail=result.message)
+
+
+@router.post("/{playbook_id}/approve-and-execute-step")
+async def approve_and_execute_step(
+    playbook_id: str,
+    request: ApproveStepRequest,
+    user: User = Depends(require_permission(Permission.EXECUTE_ACTIONS))
+):
+    """
+    Combines approval and execution in a single analyst action.
+    """
+    playbook_data = es_client.get_playbook(playbook_id)
+    if not playbook_data:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+
+    playbook = PlaybookOutput(**playbook_data)
+    step = next((s for s in playbook.steps if s.step_number == request.step_number), None)
+    if not step:
+        raise HTTPException(status_code=404, detail=f"Step {request.step_number} not found")
+
+    step.approved = True
+    step.approved_by = user.username
+    step.approved_at = utc_now()
+
+    constraints = SOARConstraints()
+    result = execute_step(
+        step=step,
+        constraints=constraints,
+        executor_username=user.username,
+        executor_role=user.role.value,
+        pipeline_id=playbook.pipeline_id,
+        incident_id=playbook.incident_id,
+    )
+
+    all_done = all(s.executed for s in playbook.steps if s.approved)
+    if all_done and any(s.executed for s in playbook.steps):
+        playbook.status = "executed"
+    else:
+        playbook.status = "partially_approved"
+
+    es_client.store_playbook(playbook_id, playbook.model_dump())
+
+    return {
+        "success": result.success,
+        "message": result.message,
+        "step_number": step.step_number,
+        "action": step.action,
+        "target": step.target_entity,
+        "executed": step.executed,
+        "playbook_status": playbook.status,
+    }
+
+
+@router.post("/{playbook_id}/approve-and-execute-all")
+async def approve_and_execute_all(
+    playbook_id: str,
+    user: User = Depends(require_permission(Permission.EXECUTE_ACTIONS))
+):
+    """
+    Approve and execute all containment steps in the playbook.
+    """
+    playbook_data = es_client.get_playbook(playbook_id)
+    if not playbook_data:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+
+    playbook = PlaybookOutput(**playbook_data)
+    constraints = SOARConstraints()
+    results = []
+
+    for step in playbook.steps:
+        if not step.executed:
+            step.approved = True
+            step.approved_by = user.username
+            step.approved_at = utc_now()
+
+            res = execute_step(
+                step=step,
+                constraints=constraints,
+                executor_username=user.username,
+                executor_role=user.role.value,
+                pipeline_id=playbook.pipeline_id,
+                incident_id=playbook.incident_id,
+            )
+            results.append({
+                "step_number": step.step_number,
+                "action": step.action,
+                "target": step.target_entity,
+                "success": res.success,
+                "message": res.message,
+            })
+
+    playbook.status = "executed"
+    es_client.store_playbook(playbook_id, playbook.model_dump())
+
+    return {
+        "message": f"Executed {len(results)} steps for playbook {playbook_id}",
+        "playbook_id": playbook_id,
+        "status": "executed",
+        "results": results,
+    }
